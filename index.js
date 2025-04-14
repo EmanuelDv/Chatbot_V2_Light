@@ -24,19 +24,31 @@ const TIMEOUT_MS = TIMEOUT_MINUTES * 60 * 1000;
 function setTimeoutForUser(remitente) {
     const estado = estadosConversacion[remitente];
 
-    if (estado && estado.timeoutId) {
-        clearTimeout(estado.timeoutId);
+    // No hacer nada si no hay estado (conversación finalizada)
+    if (!estado) {
+        console.log(`No se configura temporizador para ${remitente}: estado no existe`);
+        return;
     }
 
-    if (estado && estado.nivel !== "con_asesor") {
+    // Limpiar cualquier temporizador existente
+    if (estado.timeoutId) {
+        clearTimeout(estado.timeoutId);
+        estado.timeoutId = null;
+        console.log(`Temporizador anterior limpiado para ${remitente}`);
+    }
+
+    // Configurar nuevo temporizador solo si no está en con_asesor
+    if (estado.nivel !== "con_asesor") {
         estado.timeoutId = setTimeout(async () => {
             try {
-                await sock.sendMessage(remitente, { text: "Han pasado 5 minutos sin respuesta. La conversación ha expirado. Escribe 'hola' para empezar de nuevo." });
+                await sock.sendMessage(remitente, { text: "Han pasado 5 minutos sin respuesta. La conversación ha expirada. Escribe 'hola' para empezar de nuevo." });
                 delete estadosConversacion[remitente];
+                console.log(`Conversación expirada para ${remitente}`);
             } catch (error) {
                 console.error('Error en timeout:', error);
             }
         }, TIMEOUT_MS);
+        console.log(`Temporizador configurado para ${remitente}`);
     }
 }
 
@@ -101,6 +113,11 @@ const stageHandlers = {
             await sock.sendMessage(message.key.remoteJid, { text: seleccion.respuesta });
             console.log('Mensaje enviado en terminos:', seleccion.respuesta);
             if (seleccion.nivel === null) {
+                // Limpiar temporizador antes de eliminar estado
+                if (estado.timeoutId) {
+                    clearTimeout(estado.timeoutId);
+                    console.log(`Temporizador limpiado para ${message.key.remoteJid} en terminos`);
+                }
                 delete estadosConversacion[message.key.remoteJid];
                 console.log('Estado eliminado:', message.key.remoteJid);
             } else if (seleccion.nivel) {
@@ -125,6 +142,11 @@ const stageHandlers = {
             await sock.sendMessage(message.key.remoteJid, { text: seleccion.respuesta });
             console.log('Mensaje enviado en principal:', seleccion.respuesta);
             if (seleccion.nivel === null) {
+                // Limpiar temporizador antes de eliminar estado
+                if (estado.timeoutId) {
+                    clearTimeout(estado.timeoutId);
+                    console.log(`Temporizador limpiado para ${message.key.remoteJid} antes de eliminar estado`);
+                }
                 delete estadosConversacion[message.key.remoteJid];
                 console.log('Estado eliminado:', message.key.remoteJid);
             } else if (seleccion.nivel) {
@@ -339,10 +361,12 @@ async function connectToWhatsApp() {
 
             if (texto === "salir" && estadosConversacion[remitente]) {
                 console.log('Saliendo del modo actual');
-                await sock.sendMessage(remitente, { text: "Has salido del modo actual. Escribe 'hola' para ver el menú." });
+                // Limpiar temporizador antes de eliminar estado
                 if (estadosConversacion[remitente].timeoutId) {
                     clearTimeout(estadosConversacion[remitente].timeoutId);
+                    console.log(`Temporizador limpiado para ${remitente} al salir`);
                 }
+                await sock.sendMessage(remitente, { text: "Has salido del modo actual. Escribe 'hola' para ver el menú." });
                 delete estadosConversacion[remitente];
                 return;
             }
@@ -358,7 +382,12 @@ async function connectToWhatsApp() {
             const handler = stageHandlers[estado.nivel] || stageHandlers.inicio;
             console.log(`Ejecutando handler para nivel: ${estado.nivel}`);
             await handler(message, estado);
-            setTimeoutForUser(remitente);
+            // Solo configurar temporizador si el estado aún existe
+            if (estadosConversacion[remitente]) {
+                setTimeoutForUser(remitente);
+            } else {
+                console.log(`No se configura temporizador para ${remitente}: estado eliminado`);
+            }
         } catch (error) {
             console.error('Error procesando mensaje:', error);
             await sock.sendMessage(remitente, { text: 'Ocurrió un error. Por favor, intenta de nuevo.' });
